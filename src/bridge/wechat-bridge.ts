@@ -169,6 +169,50 @@ export function shouldForwardBridgeEventToWechat(
   }
 }
 
+export function extractFootballMatchProgressMessages(text: string): string[] {
+  const messages: string[] = [];
+  for (const line of String(text || "").split(/\r?\n/)) {
+    const markerIndex = line.indexOf("football-match-progress ");
+    if (markerIndex < 0) {
+      continue;
+    }
+
+    const rawJson = line.slice(markerIndex + "football-match-progress ".length).trim();
+    const parsed = parseFootballMatchProgressPayload(rawJson);
+    const message = typeof parsed?.message === "string" ? parsed.message.replace(/\s+/g, " ").trim() : "";
+    if (message) {
+      messages.push(truncatePreview(message, 500));
+    }
+  }
+  return messages;
+}
+
+function parseFootballMatchProgressPayload(rawJson: string): { message?: unknown } | null {
+  if (!rawJson) {
+    return null;
+  }
+  try {
+    const parsed = JSON.parse(rawJson) as unknown;
+    return isRecord(parsed) ? parsed : null;
+  } catch {
+    const start = rawJson.indexOf("{");
+    const end = rawJson.lastIndexOf("}");
+    if (start < 0 || end <= start) {
+      return null;
+    }
+    try {
+      const parsed = JSON.parse(rawJson.slice(start, end + 1)) as unknown;
+      return isRecord(parsed) ? parsed : null;
+    } catch {
+      return null;
+    }
+  }
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
 export function formatUserFacingInboundError(params: {
   adapter: BridgeAdapterKind;
   cwd?: string;
@@ -1095,12 +1139,32 @@ function wireAdapterEvents(params: {
       case "stdout":
       case "stderr":
         updateLastOutputAt();
+        {
+          const progressMessages = extractFootballMatchProgressMessages(event.text);
+          if (progressMessages.length > 0) {
+            stateStore.appendLog(
+              `football_match_progress: count=${progressMessages.length} text=${truncatePreview(progressMessages.join(" | "), 400)}`,
+            );
+            trackWechatForwardTask(outputBatcher.flushNow().then(async () => {
+              for (const message of progressMessages) {
+                await queueWechatMessage(authorizedUserId, message, "notice");
+              }
+            }));
+            break;
+          }
+        }
         if (shouldForwardBridgeEventToWechat(options.adapter, event.type)) {
           outputBatcher.push(event.text);
         }
         break;
       case "final_reply":
         stateStore.appendLog(`final_reply: ${truncatePreview(event.text)}`);
+        if (options.adapter === "opencode" && event.origin === "local") {
+          stateStore.appendLog(
+            `final_reply_skipped: adapter=${options.adapter} origin=local text=${truncatePreview(event.text)}`,
+          );
+          break;
+        }
         trackWechatForwardTask(outputBatcher.flushNow().then(async () => {
           await forwardWechatFinalReply({
             adapter: options.adapter,

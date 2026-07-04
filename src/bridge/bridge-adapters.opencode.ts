@@ -1141,6 +1141,7 @@ export class OpenCodeServerAdapter implements BridgeAdapter {
       this.clearWechatWorkingNotice(true);
       this.pendingLocalPrompt = "";
       this.clearPendingPermissionState();
+      const completedOrigin = this.state.activeTurnOrigin;
       this.state.activeTurnOrigin = undefined;
       this.hasAcceptedInput = false;
       const completedPreview = this.currentPreview;
@@ -1155,6 +1156,7 @@ export class OpenCodeServerAdapter implements BridgeAdapter {
             this.emit({
               type: "final_reply",
               text: finalReplyText,
+              origin: completedOrigin,
               timestamp: nowIso(),
             });
           }

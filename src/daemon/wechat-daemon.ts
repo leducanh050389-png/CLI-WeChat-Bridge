@@ -57,6 +57,7 @@ import {
   truncatePreview,
 } from "../bridge/bridge-utils.ts";
 import {
+  extractFootballMatchProgressMessages,
   formatUserFacingBridgeFatalError,
   formatUserFacingInboundError,
   formatWechatContextTokenStaleLogEntry,
@@ -1153,12 +1154,36 @@ class WechatDaemon {
       case "stdout":
       case "stderr":
         slot.lastOutputAt = Date.now();
+        {
+          const progressMessages = extractFootballMatchProgressMessages(event.text);
+          if (progressMessages.length > 0) {
+            appendDaemonLog(
+              `football_match_progress: adapter=${slot.adapter} count=${progressMessages.length} text=${truncatePreview(progressMessages.join(" | "), 400)}`,
+            );
+            this.trackWechatForwardTask(slot.outputBatcher.flushNow().then(async () => {
+              for (const message of progressMessages) {
+                await this.queueWechatMessage(
+                  this.authorizedUserId,
+                  prefixDaemonAdapterMessage(slot.adapter, message),
+                  "notice",
+                );
+              }
+            }));
+            break;
+          }
+        }
         if (shouldForwardBridgeEventToWechat(slot.adapter, event.type)) {
           slot.outputBatcher.push(event.text);
         }
         break;
       case "final_reply":
         appendDaemonLog(`final_reply: adapter=${slot.adapter} text=${truncatePreview(event.text)}`);
+        if (slot.adapter === "opencode" && event.origin === "local") {
+          appendDaemonLog(
+            `final_reply_skipped: adapter=${slot.adapter} origin=local text=${truncatePreview(event.text)}`,
+          );
+          break;
+        }
         this.trackWechatForwardTask(slot.outputBatcher.flushNow().then(async () => {
           await forwardWechatFinalReply({
             adapter: slot.adapter,
