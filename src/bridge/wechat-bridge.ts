@@ -110,7 +110,6 @@ type WechatSendContext =
 
 const POLL_RETRY_BASE_MS = 1_000;
 const POLL_RETRY_MAX_MS = 30_000;
-const FOOTBALL_MATCH_HANDOFF_FINAL_ALLOW_MS = 5 * 60 * 1_000;
 const PARENT_PROCESS_POLL_MS = 5_000;
 const WECHAT_SEND_MAX_ATTEMPTS = 3;
 const WECHAT_SEND_RETRY_BASE_MS = 750;
@@ -685,7 +684,6 @@ async function main(): Promise<void> {
     await queueWechatMessage(stateStore.getState().authorizedUserId, text);
   });
   let footballMatchHistoryListedAtMs = 0;
-  let footballMatchHandoffFinalAllowedUntil = 0;
   const maybeDrainDeferredInboundMessages = async (): Promise<void> => {
     if (drainingDeferredInboundMessages || !ensureRuntimeOwnership()) {
       return;
@@ -871,12 +869,6 @@ async function main(): Promise<void> {
         activeTask = null;
         lastHeartbeatAt = 0;
       },
-      isFootballMatchHandoffFinalAllowed: () =>
-        footballMatchHandoffFinalAllowedUntil > 0 &&
-        Date.now() <= footballMatchHandoffFinalAllowedUntil,
-      consumeFootballMatchHandoffFinalAllowance: () => {
-        footballMatchHandoffFinalAllowedUntil = 0;
-      },
       updateLastOutputAt: () => {
         lastOutputAt = Date.now();
       },
@@ -1014,10 +1006,6 @@ async function main(): Promise<void> {
             setFootballMatchHistoryListedAtMs: (value) => {
               footballMatchHistoryListedAtMs = value;
             },
-            allowNextFootballMatchHandoffFinal: () => {
-              footballMatchHandoffFinalAllowedUntil =
-                Date.now() + FOOTBALL_MATCH_HANDOFF_FINAL_ALLOW_MS;
-            },
           });
         } catch (err) {
           const errorText = err instanceof Error ? err.message : String(err);
@@ -1117,8 +1105,6 @@ function wireAdapterEvents(params: {
   maybeDrainDeferredInboundMessages: () => Promise<void>;
   getActiveTask: () => ActiveTask | null;
   clearActiveTask: () => void;
-  isFootballMatchHandoffFinalAllowed: () => boolean;
-  consumeFootballMatchHandoffFinalAllowance: () => void;
   updateLastOutputAt: () => void;
   syncSharedSessionState: () => void;
   syncLocalClientEndpoint: () => void;
@@ -1136,8 +1122,6 @@ function wireAdapterEvents(params: {
     maybeDrainDeferredInboundMessages,
     getActiveTask,
     clearActiveTask,
-    isFootballMatchHandoffFinalAllowed,
-    consumeFootballMatchHandoffFinalAllowance,
     updateLastOutputAt,
     syncSharedSessionState,
     syncLocalClientEndpoint,
@@ -1181,19 +1165,11 @@ function wireAdapterEvents(params: {
         break;
       case "final_reply":
         stateStore.appendLog(`final_reply: ${truncatePreview(event.text)}`);
-        const allowFootballHandoffFinal =
-          options.adapter === "opencode" &&
-          event.origin === "local" &&
-          isFootballMatchHandoffFinalAllowed();
-        if (options.adapter === "opencode" && event.origin === "local" && !allowFootballHandoffFinal) {
+        if (options.adapter === "opencode" && event.origin === "local") {
           stateStore.appendLog(
             `final_reply_skipped: adapter=${options.adapter} origin=local text=${truncatePreview(event.text)}`,
           );
           break;
-        }
-        if (allowFootballHandoffFinal) {
-          consumeFootballMatchHandoffFinalAllowance();
-          stateStore.appendLog("final_reply_local_allowed: football_match_handoff");
         }
         trackWechatForwardTask(outputBatcher.flushNow().then(async () => {
           await forwardWechatFinalReply({
@@ -1446,7 +1422,6 @@ async function handleInboundMessage(params: {
   deferInboundMessage: (message: InboundWechatMessage) => Promise<void>;
   getFootballMatchHistoryListedAtMs: () => number;
   setFootballMatchHistoryListedAtMs: (value: number) => void;
-  allowNextFootballMatchHandoffFinal: () => void;
 }): Promise<ActiveTask | null> {
   let {
     message,
@@ -1460,7 +1435,6 @@ async function handleInboundMessage(params: {
     deferInboundMessage,
     getFootballMatchHistoryListedAtMs,
     setFootballMatchHistoryListedAtMs,
-    allowNextFootballMatchHandoffFinal,
   } = params;
   const state = stateStore.getState();
 
@@ -1700,7 +1674,6 @@ async function handleInboundMessage(params: {
       await queueWechatMessage(message.senderId, content);
     }
     if (footballMatchDirect.handoffPrompt) {
-      allowNextFootballMatchHandoffFinal();
       return dispatchInboundWechatText({
         message: { ...message, text: footballMatchDirect.handoffPrompt, attachments: [] },
         options,

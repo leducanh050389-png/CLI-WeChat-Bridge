@@ -11,8 +11,6 @@ export type FootballMatchDirectResult = {
   handoffPrompt?: string;
 };
 
-const FOOTBALL_MATCH_HANDOFF_PROMPT_PREFIX = "足球预测流程已经由微信桥直连执行完成。";
-
 type FootballMatchDirectCommand =
   | { type: "list" }
   | { type: "show"; run: string; model?: string }
@@ -154,7 +152,7 @@ function buildPredictionHandoffPrompt(params: {
   pipelineJsonPath: string;
 }): string {
   return [
-    `${FOOTBALL_MATCH_HANDOFF_PROMPT_PREFIX}现在只做最终展示和第五层合并分析。`,
+    "足球预测流程已经由微信桥直连执行完成。现在只做最终展示和第五层合并分析。",
     "",
     "硬性要求：",
     "- 不要重新运行 run_pipeline.mjs。",

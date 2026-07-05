@@ -152,7 +152,6 @@ type DaemonSlot = {
   pendingConfirmations: PendingApproval[];
   pendingUserInput: PendingUserInputRequest | null;
   activeTask: ActiveTask | null;
-  footballMatchHandoffFinalAllowedUntil: number;
   lastOutputAt: number;
 };
 
@@ -162,7 +161,6 @@ const RUNTIME_ENTRY_EXTENSION = path.extname(MODULE_FILE) === ".ts" ? ".ts" : ".
 const DAEMON_HOST = "127.0.0.1";
 const POLL_RETRY_BASE_MS = 1_000;
 const POLL_RETRY_MAX_MS = 30_000;
-const FOOTBALL_MATCH_HANDOFF_FINAL_ALLOW_MS = 5 * 60 * 1_000;
 const WECHAT_SEND_MAX_ATTEMPTS = 3;
 const WECHAT_SEND_RETRY_BASE_MS = 750;
 const SINGLE_BRIDGE_STOP_TIMEOUT_MS = 10_000;
@@ -1111,7 +1109,6 @@ class WechatDaemon {
       pendingConfirmations: [],
       pendingUserInput: null,
       activeTask: null,
-      footballMatchHandoffFinalAllowedUntil: 0,
       lastOutputAt: 0,
     };
 
@@ -1183,20 +1180,11 @@ class WechatDaemon {
         break;
       case "final_reply":
         appendDaemonLog(`final_reply: adapter=${slot.adapter} text=${truncatePreview(event.text)}`);
-        const allowFootballHandoffFinal =
-          slot.adapter === "opencode" &&
-          event.origin === "local" &&
-          slot.footballMatchHandoffFinalAllowedUntil > 0 &&
-          Date.now() <= slot.footballMatchHandoffFinalAllowedUntil;
-        if (slot.adapter === "opencode" && event.origin === "local" && !allowFootballHandoffFinal) {
+        if (slot.adapter === "opencode" && event.origin === "local") {
           appendDaemonLog(
             `final_reply_skipped: adapter=${slot.adapter} origin=local text=${truncatePreview(event.text)}`,
           );
           break;
-        }
-        if (allowFootballHandoffFinal) {
-          slot.footballMatchHandoffFinalAllowedUntil = 0;
-          appendDaemonLog("final_reply_local_allowed: adapter=opencode reason=football_match_handoff");
         }
         this.trackWechatForwardTask(slot.outputBatcher.flushNow().then(async () => {
           await forwardWechatFinalReply({
@@ -1544,8 +1532,6 @@ class WechatDaemon {
         await this.queueWechatMessage(message.senderId, content);
       }
       if (footballMatchDirect.handoffPrompt) {
-        slot.footballMatchHandoffFinalAllowedUntil =
-          Date.now() + FOOTBALL_MATCH_HANDOFF_FINAL_ALLOW_MS;
         await this.dispatchInboundWechatText(
           { ...message, text: footballMatchDirect.handoffPrompt, attachments: [] },
           slot,
