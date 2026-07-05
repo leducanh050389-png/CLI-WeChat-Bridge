@@ -136,7 +136,6 @@ export type BridgeEvent =
   | {
       type: "final_reply";
       text: string;
-      origin?: BridgeTurnOrigin;
       timestamp: string;
     }
   | {
