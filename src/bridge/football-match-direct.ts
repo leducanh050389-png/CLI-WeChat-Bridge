@@ -8,6 +8,7 @@ export type FootballMatchDirectResult = {
   command?: "list" | "show" | "predict";
   messages: string[];
   skillDir?: string;
+  handoffPrompt?: string;
 };
 
 type FootballMatchDirectCommand =
@@ -100,6 +101,21 @@ async function runFootballMatchPrediction(params: {
   ], {
     onProgress: params.onProgress,
   });
+  const pipelineJsonPath = path.join(params.skillDir, outputFile);
+
+  if (pipeline.code === 0) {
+    await params.onProgress?.("预测流程已完成，正在生成最终合并分析");
+    return {
+      handled: true,
+      command: "predict",
+      skillDir: params.skillDir,
+      messages: [],
+      handoffPrompt: buildPredictionHandoffPrompt({
+        skillDir: params.skillDir,
+        pipelineJsonPath,
+      }),
+    };
+  }
 
   const rendered = await runFootballMatchNode(params.skillDir, [
     "scripts/render_pipeline_result.mjs",
@@ -129,6 +145,28 @@ async function runFootballMatchPrediction(params: {
       `football-match 预测流程失败：${sanitizeScriptError(rendered.stderr || rendered.stdout || pipeline.stderr || pipeline.stdout || "empty output")}`,
     ],
   };
+}
+
+function buildPredictionHandoffPrompt(params: {
+  skillDir: string;
+  pipelineJsonPath: string;
+}): string {
+  return [
+    "足球预测流程已经由微信桥直连执行完成。现在只做最终展示和第五层合并分析。",
+    "",
+    "硬性要求：",
+    "- 不要重新运行 run_pipeline.mjs。",
+    "- 不要重新抓 source，不要重新跑 quant/intel/judge，不要联网搜索，不要使用记忆补充事实。",
+    "- 只读取下面这个 pipeline JSON 和其中引用的 final/consensusPrompt：",
+    `  ${params.pipelineJsonPath}`,
+    "- 如果 JSON 中有 batch.results[]，按每场比赛分别汇总。",
+    "- 对每个成功场次，优先使用该场的 consensusPrompt 作为第五层汇总依据；如果缺少 consensusPrompt，则读取 modelFinals[] / externalJudges.results[].finalPath 对应的 final Markdown 原文，只做同向与分歧汇总。",
+    "- 第五层只总结各模型同向与分歧，不新增新闻、伤停、盘口事实、比分、概率或投注建议。",
+    "- 输出用户可见 Markdown，不要输出 JSON、代码块、runDir、finalPath、stdout、stderr、后台进程文本或 Local OpenCode input。",
+    "- 不要把多个比赛揉成一个判断；多场时按比赛分块展示。",
+    "",
+    "你可以读取文件，但最终只回复合并分析正文。",
+  ].join("\n");
 }
 
 function parseFootballMatchDirectCommand(

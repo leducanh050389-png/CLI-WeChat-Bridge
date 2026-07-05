@@ -1673,6 +1673,14 @@ async function handleInboundMessage(params: {
     for (const content of footballMatchDirect.messages) {
       await queueWechatMessage(message.senderId, content);
     }
+    if (footballMatchDirect.handoffPrompt) {
+      return dispatchInboundWechatText({
+        message: { ...message, text: footballMatchDirect.handoffPrompt, attachments: [] },
+        options,
+        stateStore,
+        adapter,
+      });
+    }
     return null;
   }
 
