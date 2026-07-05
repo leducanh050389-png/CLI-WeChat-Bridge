@@ -9,6 +9,7 @@ import { delay } from "./bridge-adapters.shared.ts";
 import { t } from "../i18n/index.ts";
 import { BridgeController } from "./bridge-controller.ts";
 import { forwardWechatFinalReply } from "./bridge-final-reply.ts";
+import { handleFootballMatchDirectRequest } from "./football-match-direct.ts";
 import { ensureWechatCredentials } from "../wechat/setup.ts";
 import { BridgeStateStore } from "./bridge-state.ts";
 import { reapOrphanedOpencodeProcesses, reapPeerBridgeProcesses } from "./bridge-process-reaper.ts";
@@ -682,6 +683,7 @@ async function main(): Promise<void> {
   const outputBatcher = new OutputBatcher(async (text) => {
     await queueWechatMessage(stateStore.getState().authorizedUserId, text);
   });
+  let footballMatchHistoryListedAtMs = 0;
   const maybeDrainDeferredInboundMessages = async (): Promise<void> => {
     if (drainingDeferredInboundMessages || !ensureRuntimeOwnership()) {
       return;
@@ -999,6 +1001,10 @@ async function main(): Promise<void> {
                 nextMessage.senderId,
                 formatDeferredCodexInboundQueueMessage(deferredInboundMessages.length),
               );
+            },
+            getFootballMatchHistoryListedAtMs: () => footballMatchHistoryListedAtMs,
+            setFootballMatchHistoryListedAtMs: (value) => {
+              footballMatchHistoryListedAtMs = value;
             },
           });
         } catch (err) {
@@ -1414,6 +1420,8 @@ async function handleInboundMessage(params: {
   ) => Promise<boolean>;
   outputBatcher: OutputBatcher;
   deferInboundMessage: (message: InboundWechatMessage) => Promise<void>;
+  getFootballMatchHistoryListedAtMs: () => number;
+  setFootballMatchHistoryListedAtMs: (value: number) => void;
 }): Promise<ActiveTask | null> {
   let {
     message,
@@ -1425,6 +1433,8 @@ async function handleInboundMessage(params: {
     queueWechatMessage,
     outputBatcher,
     deferInboundMessage,
+    getFootballMatchHistoryListedAtMs,
+    setFootballMatchHistoryListedAtMs,
   } = params;
   const state = stateStore.getState();
 
@@ -1638,6 +1648,26 @@ async function handleInboundMessage(params: {
       message.senderId,
       formatPendingUserInputReminder(state.pendingUserInput),
     );
+    return null;
+  }
+
+  const footballMatchDirect = await handleFootballMatchDirectRequest({
+    text: message.text,
+    cwd: options.cwd,
+    allowBareIndex: Date.now() - getFootballMatchHistoryListedAtMs() < 10 * 60 * 1000,
+  });
+  if (footballMatchDirect.handled) {
+    if (footballMatchDirect.command === "list") {
+      setFootballMatchHistoryListedAtMs(Date.now());
+    }
+    stateStore.appendLog(
+      `football_match_direct: command=${footballMatchDirect.command ?? "unknown"} messages=${footballMatchDirect.messages.length} skillDir=${footballMatchDirect.skillDir ?? ""}`,
+    );
+    await outputBatcher.flushNow();
+    outputBatcher.clear();
+    for (const content of footballMatchDirect.messages) {
+      await queueWechatMessage(message.senderId, content);
+    }
     return null;
   }
 

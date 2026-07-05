@@ -21,6 +21,7 @@ import {
   readBridgeLockFile,
   type BridgeLockPayload,
 } from "../bridge/bridge-state.ts";
+import { handleFootballMatchDirectRequest } from "../bridge/football-match-direct.ts";
 import {
   type BridgeProcessRecord,
   getProcessRecordByPid,
@@ -710,6 +711,7 @@ class WechatDaemon {
   takenOverAdapter?: DaemonAdapterKind;
   private textSendChain = Promise.resolve();
   private attachmentSendChain = Promise.resolve();
+  private footballMatchHistoryListedAtMs = 0;
   private readonly pendingWechatForwardTasks = new Set<Promise<void>>();
   private shutdownPromise: Promise<void> | null = null;
   private ipcServer: net.Server | null = null;
@@ -1504,6 +1506,26 @@ class WechatDaemon {
           formatPendingUserInputReminder(slot.pendingUserInput),
         ),
       );
+      return;
+    }
+
+    const footballMatchDirect = await handleFootballMatchDirectRequest({
+      text: message.text,
+      cwd: this.cwd,
+      allowBareIndex: Date.now() - this.footballMatchHistoryListedAtMs < 10 * 60 * 1000,
+    });
+    if (footballMatchDirect.handled) {
+      if (footballMatchDirect.command === "list") {
+        this.footballMatchHistoryListedAtMs = Date.now();
+      }
+      appendDaemonLog(
+        `football_match_direct: command=${footballMatchDirect.command ?? "unknown"} messages=${footballMatchDirect.messages.length} skillDir=${footballMatchDirect.skillDir ?? ""}`,
+      );
+      await slot.outputBatcher.flushNow();
+      slot.outputBatcher.clear();
+      for (const content of footballMatchDirect.messages) {
+        await this.queueWechatMessage(message.senderId, content);
+      }
       return;
     }
 
