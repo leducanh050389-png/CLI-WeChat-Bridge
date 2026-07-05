@@ -1531,12 +1531,6 @@ class WechatDaemon {
       for (const content of footballMatchDirect.messages) {
         await this.queueWechatMessage(message.senderId, content);
       }
-      if (footballMatchDirect.handoffPrompt) {
-        await this.dispatchInboundWechatText(
-          { ...message, text: footballMatchDirect.handoffPrompt, attachments: [] },
-          slot,
-        );
-      }
       return;
     }
 
