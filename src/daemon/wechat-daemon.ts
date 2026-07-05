@@ -1513,6 +1513,11 @@ class WechatDaemon {
       text: message.text,
       cwd: this.cwd,
       allowBareIndex: Date.now() - this.footballMatchHistoryListedAtMs < 10 * 60 * 1000,
+      onProgress: async (content) => {
+        await slot.outputBatcher.flushNow();
+        slot.outputBatcher.clear();
+        await this.queueWechatMessage(message.senderId, content, "notice");
+      },
     });
     if (footballMatchDirect.handled) {
       if (footballMatchDirect.command === "list") {
