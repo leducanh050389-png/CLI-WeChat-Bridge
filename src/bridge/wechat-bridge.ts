@@ -1655,11 +1655,6 @@ async function handleInboundMessage(params: {
     text: message.text,
     cwd: options.cwd,
     allowBareIndex: Date.now() - getFootballMatchHistoryListedAtMs() < 10 * 60 * 1000,
-    onProgress: async (content) => {
-      await outputBatcher.flushNow();
-      outputBatcher.clear();
-      await queueWechatMessage(message.senderId, content, "notice");
-    },
   });
   if (footballMatchDirect.handled) {
     if (footballMatchDirect.command === "list") {

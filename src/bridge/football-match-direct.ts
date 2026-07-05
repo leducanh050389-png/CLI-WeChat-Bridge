@@ -5,22 +5,20 @@ import { spawn } from "node:child_process";
 
 export type FootballMatchDirectResult = {
   handled: boolean;
-  command?: "list" | "show" | "predict";
+  command?: "list" | "show";
   messages: string[];
   skillDir?: string;
 };
 
 type FootballMatchDirectCommand =
   | { type: "list" }
-  | { type: "show"; run: string; model?: string }
-  | { type: "predict"; query: string };
+  | { type: "show"; run: string; model?: string };
 
 export async function handleFootballMatchDirectRequest(params: {
   text: string;
   cwd: string;
   allowBareIndex: boolean;
   maxChars?: number;
-  onProgress?: (message: string) => Promise<void> | void;
 }): Promise<FootballMatchDirectResult> {
   const command = parseFootballMatchDirectCommand(params.text, {
     allowBareIndex: params.allowBareIndex,
@@ -34,17 +32,8 @@ export async function handleFootballMatchDirectRequest(params: {
     return {
       handled: true,
       command: command.type,
-      messages: [`找不到 football-match skill 目录，无法${command.type === "predict" ? "运行预测流程" : "读取历史预测文件"}。`],
+      messages: ["找不到 football-match skill 目录，无法读取历史预测文件。"],
     };
-  }
-
-  if (command.type === "predict") {
-    return await runFootballMatchPrediction({
-      skillDir,
-      query: command.query,
-      maxChars: params.maxChars,
-      onProgress: params.onProgress,
-    });
   }
 
   const args = command.type === "list"
@@ -82,55 +71,6 @@ export async function handleFootballMatchDirectRequest(params: {
   };
 }
 
-async function runFootballMatchPrediction(params: {
-  skillDir: string;
-  query: string;
-  maxChars?: number;
-  onProgress?: (message: string) => Promise<void> | void;
-}): Promise<FootballMatchDirectResult> {
-  const outputFile = path.join("runs", "latest-pipeline.json");
-  const pipeline = await runFootballMatchNode(params.skillDir, [
-    "scripts/run_pipeline.mjs",
-    params.query,
-    "--format",
-    "json",
-    "--stdout-file",
-    outputFile,
-    "--silent-stdout",
-  ], {
-    onProgress: params.onProgress,
-  });
-
-  const rendered = await runFootballMatchNode(params.skillDir, [
-    "scripts/render_pipeline_result.mjs",
-    "--input",
-    outputFile,
-    "--format",
-    "json",
-    "--max-chars",
-    String(params.maxChars && params.maxChars >= 500 ? params.maxChars : 3500),
-  ]);
-  const messages = extractMessages(parseJsonLoose(rendered.stdout));
-
-  if (rendered.code === 0 && messages.length) {
-    return {
-      handled: true,
-      command: "predict",
-      skillDir: params.skillDir,
-      messages,
-    };
-  }
-
-  return {
-    handled: true,
-    command: "predict",
-    skillDir: params.skillDir,
-    messages: [
-      `football-match 预测流程失败：${sanitizeScriptError(rendered.stderr || rendered.stdout || pipeline.stderr || pipeline.stdout || "empty output")}`,
-    ],
-  };
-}
-
 function parseFootballMatchDirectCommand(
   text: string,
   options: { allowBareIndex: boolean },
@@ -142,10 +82,6 @@ function parseFootballMatchDirectCommand(
 
   if (isHistoryListRequest(raw)) {
     return { type: "list" };
-  }
-
-  if (isFootballMatchPredictionRequest(raw)) {
-    return { type: "predict", query: raw };
   }
 
   const show = raw.match(/^(?:看|查看|发|发送|读|读取|打开)?\s*(?:第\s*)?(\d+)(?:\s*个)?(?:\s*[,，、 ]\s*(.+?))?$/u);
@@ -164,21 +100,6 @@ function parseFootballMatchDirectCommand(
 
 function isHistoryListRequest(raw: string): boolean {
   return /历史预测|历史预测数据|历史预测记录|预测记录|历史结果|历史文件|列出.*历史|历史.*列表|run\s*列表|final\s*列表|文件列表/u.test(raw);
-}
-
-function isFootballMatchPredictionRequest(raw: string): boolean {
-  if (/历史预测|历史预测数据|历史预测记录|预测记录|历史结果|历史文件|列表|第\s*\d+\s*个/u.test(raw)) {
-    return false;
-  }
-  const strongPrediction =
-    /预测|重新预测|预判|胜平负|比分|亚盘|盘口|让球|大小球|角球|总进球/u.test(raw);
-  const weakPrediction = /分析|判断|推荐|看好/u.test(raw);
-  const matchScope =
-    /世界杯|vs|VS|v\.?|matchId|matchid|\b\d{6,}\b|主队|客队/u.test(raw);
-  const footballTopic = /足球/u.test(raw);
-  const looseFootballScope = /比赛|球赛|对阵/u.test(raw);
-  return (strongPrediction && (matchScope || looseFootballScope || footballTopic)) ||
-    (weakPrediction && (matchScope || looseFootballScope));
 }
 
 function normalizeText(text: string): string {
@@ -219,17 +140,12 @@ function resolveFootballMatchSkillDir(cwd: string): string {
 
 function isFootballMatchSkillDir(dir: string): boolean {
   return fs.existsSync(path.join(dir, "scripts", "list_run_finals.mjs")) &&
-    fs.existsSync(path.join(dir, "scripts", "show_run_final.mjs")) &&
-    fs.existsSync(path.join(dir, "scripts", "run_pipeline.mjs")) &&
-    fs.existsSync(path.join(dir, "scripts", "render_pipeline_result.mjs"));
+    fs.existsSync(path.join(dir, "scripts", "show_run_final.mjs"));
 }
 
 function runFootballMatchNode(
   skillDir: string,
   args: string[],
-  options: {
-    onProgress?: (message: string) => Promise<void> | void;
-  } = {},
 ): Promise<{ code: number | null; stdout: string; stderr: string }> {
   return new Promise((resolve) => {
     const child = spawn(process.env.FOOTBALL_MATCH_NODE || process.execPath || "node", args, {
@@ -239,7 +155,6 @@ function runFootballMatchNode(
     });
     let stdout = "";
     let stderr = "";
-    const forwardProgress = createProgressForwarder(options.onProgress);
     child.stdout.setEncoding("utf8");
     child.stderr.setEncoding("utf8");
     child.stdout.on("data", (chunk: string) => {
@@ -247,64 +162,12 @@ function runFootballMatchNode(
     });
     child.stderr.on("data", (chunk: string) => {
       stderr += chunk;
-      forwardProgress(chunk);
     });
     child.on("error", (error) => {
       resolve({ code: null, stdout, stderr: `${stderr}\n${error instanceof Error ? error.message : String(error)}` });
     });
-    child.on("close", (code) => {
-      forwardProgress("", true);
-      forwardProgress.done().finally(() => resolve({ code, stdout, stderr }));
-    });
+    child.on("close", (code) => resolve({ code, stdout, stderr }));
   });
-}
-
-function createProgressForwarder(
-  onProgress?: (message: string) => Promise<void> | void,
-): ((chunk: string, flush?: boolean) => void) & { done: () => Promise<void> } {
-  let buffer = "";
-  let queue: Promise<void> = Promise.resolve();
-  let lastMessage = "";
-  const forward = ((chunk: string, flush = false) => {
-    buffer += String(chunk || "");
-    const lines = buffer.split(/\r?\n/u);
-    const ready = flush ? lines : lines.slice(0, -1);
-    buffer = flush ? "" : (lines.at(-1) || "");
-    for (const line of ready) {
-      for (const message of extractFootballMatchProgressMessages(line)) {
-        if (!message || message === lastMessage) {
-          continue;
-        }
-        lastMessage = message;
-        if (onProgress) {
-          queue = queue.then(async () => {
-            await onProgress(message);
-          }).catch(() => {});
-        }
-      }
-    }
-  }) as ((chunk: string, flush?: boolean) => void) & { done: () => Promise<void> };
-  forward.done = () => queue;
-  return forward;
-}
-
-function extractFootballMatchProgressMessages(text: string): string[] {
-  const messages: string[] = [];
-  for (const line of String(text || "").split(/\r?\n/u)) {
-    const markerIndex = line.indexOf("football-match-progress ");
-    if (markerIndex < 0) {
-      continue;
-    }
-    const rawJson = line.slice(markerIndex + "football-match-progress ".length).trim();
-    const parsed = parseJsonLoose(rawJson);
-    const message = isRecord(parsed) && typeof parsed.message === "string"
-      ? parsed.message.replace(/\s+/g, " ").trim()
-      : "";
-    if (message) {
-      messages.push(message.slice(0, 500));
-    }
-  }
-  return messages;
 }
 
 function parseJsonLoose(text: string): unknown {
